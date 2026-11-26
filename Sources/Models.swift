@@ -62,7 +62,7 @@ enum Fecha {
 // MARK: - Ajustes
 
 struct AppSettings: Codable {
-    // Horarios en minutos desde medianoche
+    // Horario de días con escuela (minutos desde medianoche)
     var wake = 6 * 60 + 50
     var breakfast = 7 * 60 + 10
     var snack = 10 * 60 + 30
@@ -76,9 +76,26 @@ struct AppSettings: Codable {
     var targetBed = 21 * 60 + 30     // meta final
     var rampStart = Date()           // día en que arrancó el ajuste de sueño
 
+    // Horario de días libres (sin escuela, fines de semana y vacaciones)
+    var fWake = 9 * 60 + 30
+    var fBreakfast = 10 * 60
+    var fSnack = 12 * 60 + 30
+    var fLunch = 15 * 60
+    var fPreWorkout = 16 * 60 + 30
+    var fWorkout = 17 * 60
+    var fDinner = 19 * 60 + 45
+    var fShower = 20 * 60 + 30
+    var fSummary = 21 * 60
+    var freeBedExtra = 30            // minutos más tarde para dormir en días libres
+    var freeAlarm = true             // alarma suave en días libres
+
     var schoolDays: [Int] = [2, 3, 4, 5, 6]   // Calendar weekday: 1 = domingo ... 7 = sábado
-    var skipDates: [String] = []              // días con alarma apagada a mano
-    var forceDates: [String] = []             // días con alarma prendida a mano
+    var freeDates: [String] = []              // días entre semana marcados como libres
+    var vacationOn = false
+    var vacationStart = Date()
+    var vacationEnd = Date()
+    var skipDates: [String] = []              // (versión vieja, ya no se usa)
+    var forceDates: [String] = []             // (versión vieja, ya no se usa)
 
     var strongShower = true
     var strongBed = true
@@ -107,7 +124,22 @@ extension AppSettings {
         startBed = c.v(.startBed, startBed)
         targetBed = c.v(.targetBed, targetBed)
         rampStart = c.v(.rampStart, rampStart)
+        fWake = c.v(.fWake, fWake)
+        fBreakfast = c.v(.fBreakfast, fBreakfast)
+        fSnack = c.v(.fSnack, fSnack)
+        fLunch = c.v(.fLunch, fLunch)
+        fPreWorkout = c.v(.fPreWorkout, fPreWorkout)
+        fWorkout = c.v(.fWorkout, fWorkout)
+        fDinner = c.v(.fDinner, fDinner)
+        fShower = c.v(.fShower, fShower)
+        fSummary = c.v(.fSummary, fSummary)
+        freeBedExtra = c.v(.freeBedExtra, freeBedExtra)
+        freeAlarm = c.v(.freeAlarm, freeAlarm)
         schoolDays = c.v(.schoolDays, schoolDays)
+        freeDates = c.v(.freeDates, freeDates)
+        vacationOn = c.v(.vacationOn, vacationOn)
+        vacationStart = c.v(.vacationStart, vacationStart)
+        vacationEnd = c.v(.vacationEnd, vacationEnd)
         skipDates = c.v(.skipDates, skipDates)
         forceDates = c.v(.forceDates, forceDates)
         strongShower = c.v(.strongShower, strongShower)
@@ -137,7 +169,7 @@ enum Comida: String, CaseIterable, Codable, Identifiable {
     var titulo: String {
         switch self {
         case .desayuno: return "Desayuno"
-        case .snack: return "Snack en la escuela"
+        case .snack: return "Snack"
         case .comida: return "Comida"
         case .preentreno: return "Snack antes de entrenar"
         case .cena: return "Cena"

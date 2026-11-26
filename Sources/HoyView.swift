@@ -12,6 +12,7 @@ struct HoyView: View {
                 let ahora = Fecha.minutes(of: hoy)
                 let items = store.horario(hoy)
                 let siguiente = items.first { $0.minutos >= ahora }
+                let libre = store.esLibre(hoy)
 
                 List {
                     Section {
@@ -20,6 +21,9 @@ struct HoyView: View {
                                 .font(.subheadline).foregroundStyle(.secondary)
                             Text("\(plan.emoji) \(plan.titulo)")
                                 .font(.title2.bold())
+                            Text(libre ? (store.enVacaciones(hoy) ? "🏖️ Vacaciones · horario libre" : "🏖️ Día libre · horario libre") : "🏫 Día de escuela")
+                                .font(.footnote.bold())
+                                .foregroundStyle(libre ? .green : .orange)
                             Text(plan.nota).font(.footnote).foregroundStyle(.secondary)
                             if store.racha() > 0 {
                                 Text("🔥 Racha: \(store.racha()) días").font(.footnote.bold()).foregroundStyle(.orange)
@@ -39,6 +43,15 @@ struct HoyView: View {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    Section("Escuela esta semana") {
+                        SemanaEscuela()
+                        Toggle("🏖️ Modo vacaciones", isOn: $store.settings.vacationOn)
+                        if store.settings.vacationOn {
+                            DatePicker("Desde", selection: $store.settings.vacationStart, displayedComponents: .date)
+                            DatePicker("Hasta", selection: $store.settings.vacationEnd, in: store.settings.vacationStart..., displayedComponents: .date)
                         }
                     }
 
@@ -84,13 +97,73 @@ struct HoyView: View {
                         }
                     }
 
-                    if Calendar.current.isDateInWeekend(hoy) {
+                    if libre {
                         Section { Text(MenuPlan.finde).font(.footnote) }
                     }
                 }
             }
             .navigationTitle("Hoy")
+            .onChange(of: store.settings.vacationOn) { _, _ in store.save(); store.reprogramarTodo() }
+            .onChange(of: store.settings.vacationStart) { _, nuevo in
+                if store.settings.vacationEnd < nuevo { store.settings.vacationEnd = nuevo }
+                store.save(); store.reprogramarTodo()
+            }
+            .onChange(of: store.settings.vacationEnd) { _, _ in store.save(); store.reprogramarTodo() }
         }
+    }
+}
+
+struct SemanaEscuela: View {
+    @EnvironmentObject var store: Store
+
+    private func semana() -> [Date] {
+        var cal = Calendar.current
+        cal.firstWeekday = 2
+        var base = Date()
+        let w = cal.component(.weekday, from: base)
+        if w == 7 { base = Fecha.add(days: 2, to: base) }
+        if w == 1 { base = Fecha.add(days: 1, to: base) }
+        let inicio = cal.dateInterval(of: .weekOfYear, for: base)?.start ?? base
+        return (0..<5).map { Fecha.add(days: $0, to: inicio) }
+    }
+
+    private func letra(_ d: Date) -> String {
+        switch Calendar.current.component(.weekday, from: d) {
+        case 2: return "L"
+        case 3: return "M"
+        case 4: return "Mi"
+        case 5: return "J"
+        default: return "V"
+        }
+    }
+
+    var body: some View {
+        let dias = semana()
+        HStack(spacing: 8) {
+            ForEach(dias, id: \.self) { d in
+                let libre = store.esLibre(d)
+                let esHoy = Calendar.current.isDateInToday(d)
+                let vac = store.enVacaciones(d)
+                Button {
+                    store.setEscuela(d, libre)
+                } label: {
+                    VStack(spacing: 2) {
+                        Text(letra(d)).font(.caption.bold())
+                        Text(libre ? "🏖️" : "🏫").font(.title3)
+                        Text(Calendar.current.component(.day, from: d).description).font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(libre ? Color.green.opacity(0.25) : Color.orange.opacity(0.25)))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(esHoy ? Color.primary : Color.clear, lineWidth: 2))
+                }
+                .buttonStyle(.plain)
+                .disabled(vac)
+            }
+        }
+        .padding(.vertical, 4)
+        Text("Toca un día para cambiar entre escuela 🏫 y libre 🏖️. En días libres cambian los horarios (Ajustes → Días libres), pero el entreno sigue.")
+            .font(.caption).foregroundStyle(.secondary)
     }
 }
 

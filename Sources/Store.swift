@@ -12,6 +12,22 @@ struct ItemHorario: Identifiable {
     let detalle: String
 }
 
+/// Horario que aplica a un día (escuela o libre).
+struct Perfil {
+    let libre: Bool
+    let wake: Int
+    let breakfast: Int
+    let snack: Int
+    let lunch: Int
+    let preWorkout: Int
+    let workout: Int
+    let dinner: Int
+    let shower: Int
+    let summary: Int
+    let bed: Int
+    let alarma: Bool
+}
+
 @MainActor
 final class Store: ObservableObject {
     static let shared = Store()
@@ -177,54 +193,78 @@ final class Store: ObservableObject {
         reprogramarTodo()
     }
 
-    // MARK: Alarma de mañana
+    // MARK: Escuela, días libres y vacaciones
 
-    func hayAlarma(_ date: Date) -> Bool {
-        let k = Fecha.key(date)
-        if settings.forceDates.contains(k) { return true }
-        if settings.skipDates.contains(k) { return false }
-        let w = Calendar.current.component(.weekday, from: date)
-        return settings.schoolDays.contains(w)
+    func enVacaciones(_ date: Date) -> Bool {
+        guard settings.vacationOn else { return false }
+        let cal = Calendar.current
+        let d = cal.startOfDay(for: date)
+        return d >= cal.startOfDay(for: settings.vacationStart) && d <= cal.startOfDay(for: settings.vacationEnd)
     }
 
-    func alarmaManana(_ on: Bool) async {
-        let k = Fecha.key(Fecha.add(days: 1, to: Date()))
-        settings.skipDates.removeAll { $0 == k }
-        settings.forceDates.removeAll { $0 == k }
-        if on { settings.forceDates.append(k) } else { settings.skipDates.append(k) }
-        // limpia fechas viejas
-        let hoy = Fecha.key(Date())
-        settings.skipDates.removeAll { $0 < hoy }
-        settings.forceDates.removeAll { $0 < hoy }
+    func esLibre(_ date: Date) -> Bool {
+        if enVacaciones(date) { return true }
+        if settings.freeDates.contains(Fecha.key(date)) { return true }
+        let w = Calendar.current.component(.weekday, from: date)
+        return !settings.schoolDays.contains(w)
+    }
+
+    func perfil(_ date: Date) -> Perfil {
+        let s = settings
+        if esLibre(date) {
+            return Perfil(libre: true, wake: s.fWake, breakfast: s.fBreakfast, snack: s.fSnack, lunch: s.fLunch,
+                          preWorkout: s.fPreWorkout, workout: s.fWorkout, dinner: s.fDinner, shower: s.fShower,
+                          summary: s.fSummary, bed: horaDormir(date) + s.freeBedExtra, alarma: s.freeAlarm)
+        }
+        return Perfil(libre: false, wake: s.wake, breakfast: s.breakfast, snack: s.snack, lunch: s.lunch,
+                      preWorkout: s.preWorkout, workout: s.workout, dinner: s.dinner, shower: s.shower,
+                      summary: s.summary, bed: horaDormir(date), alarma: true)
+    }
+
+    func hayAlarma(_ date: Date) -> Bool { perfil(date).alarma }
+
+    func setEscuela(_ date: Date, _ escuela: Bool) {
+        let k = Fecha.key(date)
+        settings.freeDates.removeAll { $0 == k }
+        if !escuela { settings.freeDates.append(k) }
+        let viejo = Fecha.key(Fecha.add(days: -14, to: Date()))
+        settings.freeDates.removeAll { $0 < viejo }
         save()
-        await reprogramarAlarmas()
+        reprogramarTodo()
+    }
+
+    /// Botones de la notificación de la noche: ¿mañana hay escuela?
+    func alarmaManana(_ escuela: Bool) async {
+        let k = Fecha.key(Fecha.add(days: 1, to: Date()))
+        settings.freeDates.removeAll { $0 == k }
+        if !escuela { settings.freeDates.append(k) }
+        save()
         reprogramarAvisos()
+        await reprogramarAlarmas()
     }
 
     // MARK: Horario del día
 
     func horario(_ date: Date) -> [ItemHorario] {
-        let s = settings
+        let p = perfil(date)
         let plan = Plan.dia(date)
         var items: [ItemHorario] = []
-        if hayAlarma(date) {
-            items.append(.init(minutos: s.wake, emoji: "⏰", titulo: "Despertar", detalle: "Alarma"))
-            items.append(.init(minutos: s.breakfast, emoji: "🍳", titulo: "Desayuno", detalle: MenuPlan.de(.desayuno, date)))
-            items.append(.init(minutos: s.snack, emoji: "🥪", titulo: "Snack", detalle: MenuPlan.de(.snack, date)))
-        } else {
-            items.append(.init(minutos: s.wake + 120, emoji: "🍳", titulo: "Desayuno (sin escuela)", detalle: MenuPlan.de(.desayuno, date) + " · No te despiertes más de 2 h después de lo normal"))
+        if p.alarma {
+            items.append(.init(minutos: p.wake, emoji: p.libre ? "☀️" : "⏰", titulo: "Despertar",
+                               detalle: p.libre ? "Día libre: alarma suave" : "Día de escuela"))
         }
-        items.append(.init(minutos: s.lunch, emoji: "🍛", titulo: "Comida", detalle: MenuPlan.de(.comida, date)))
+        items.append(.init(minutos: p.breakfast, emoji: "🍳", titulo: "Desayuno", detalle: MenuPlan.de(.desayuno, date)))
+        items.append(.init(minutos: p.snack, emoji: "🥪", titulo: "Snack", detalle: MenuPlan.de(.snack, date)))
+        items.append(.init(minutos: p.lunch, emoji: "🍛", titulo: "Comida", detalle: MenuPlan.de(.comida, date)))
         if plan.tipo != .descanso {
-            items.append(.init(minutos: s.preWorkout, emoji: "🍌", titulo: "Snack antes de entrenar", detalle: MenuPlan.de(.preentreno, date)))
-            items.append(.init(minutos: s.workout, emoji: plan.emoji, titulo: plan.titulo, detalle: plan.nota))
+            items.append(.init(minutos: p.preWorkout, emoji: "🍌", titulo: "Snack antes de entrenar", detalle: MenuPlan.de(.preentreno, date)))
+            items.append(.init(minutos: p.workout, emoji: plan.emoji, titulo: plan.titulo, detalle: plan.nota))
         }
-        items.append(.init(minutos: s.dinner, emoji: "🌮", titulo: "Cena", detalle: MenuPlan.de(.cena, date)))
-        items.append(.init(minutos: s.shower, emoji: "🚿", titulo: "Baño", detalle: "Agua caliente: te ayuda a dormir más rápido"))
-        items.append(.init(minutos: s.summary, emoji: "🌙", titulo: "Cierre del día", detalle: "Llena qué hiciste hoy"))
-        let cama = horaDormir(date)
-        items.append(.init(minutos: cama - 15, emoji: "📵", titulo: "Fuera pantallas", detalle: ""))
-        items.append(.init(minutos: cama, emoji: "😴", titulo: "Dormir", detalle: "Meta final: \(Fecha.hora(s.targetBed))"))
+        items.append(.init(minutos: p.dinner, emoji: "🌮", titulo: "Cena", detalle: MenuPlan.de(.cena, date)))
+        items.append(.init(minutos: p.shower, emoji: "🚿", titulo: "Baño", detalle: "Agua caliente: te ayuda a dormir más rápido"))
+        items.append(.init(minutos: p.summary, emoji: "🌙", titulo: "Cierre del día", detalle: "Llena qué hiciste hoy"))
+        items.append(.init(minutos: p.bed - 15, emoji: "📵", titulo: "Fuera pantallas", detalle: ""))
+        items.append(.init(minutos: p.bed, emoji: "😴", titulo: "Dormir", detalle: "Meta final: \(Fecha.hora(settings.targetBed))"))
         return items.sorted { $0.minutos < $1.minutos }
     }
 
@@ -233,9 +273,11 @@ final class Store: ObservableObject {
     func sugerencias(_ date: Date) -> [String] {
         let l = log(date)
         var out: [String] = []
-        let cama = horaDormir(date)
+        let cama = perfil(date).bed
         if l.sleepHours > 0 && l.sleepHours < 8.5 {
             out.append("😴 Dormiste \(String(format: "%.1f", l.sleepHours)) h. Para crecer al máximo necesitas 9–10. Hoy acuéstate a las \(Fecha.hora(cama)) en punto.")
+        } else if l.sleepHours > 11 {
+            out.append("😴 Dormiste \(String(format: "%.1f", l.sleepHours)) h. Está bien descansar, pero despertarte muy tarde te desacomoda y luego no te duermes temprano. Usa la alarma suave.")
         } else if l.sleepHours == 0 {
             out.append("😴 No registraste tu sueño. Anótalo, es lo que más influye en tu estatura.")
         }
@@ -284,44 +326,44 @@ final class Store: ObservableObject {
 
     func reprogramarAvisos() {
         let s = settings
-        let center = Avisos.center
-        center.removeAllPendingNotificationRequests()
+        Avisos.center.removeAllPendingNotificationRequests()
 
-        // Fijos que se repiten
-        for w in s.schoolDays {
-            Avisos.diaria("desayuno-\(w)", minutos: s.breakfast, weekday: w, "🍳 Desayuno", "Con proteína: huevo y leche. No te lo saltes.")
-            Avisos.diaria("snack-\(w)", minutos: s.snack, weekday: w, "🥪 Snack", "Cómete tu sándwich y una fruta.")
-        }
-        Avisos.diaria("comida", minutos: s.lunch, "🍛 Hora de comer", "Proteína + arroz o tortillas + ensalada.")
-        Avisos.diaria("cena", minutos: s.dinner, "🌮 Hora de cenar", "Cena fuerte en proteína.")
-        if !s.strongShower {
-            Avisos.diaria("bano", minutos: s.shower, "🚿 Hora de bañarte", "Agua caliente y luego a relajarte.")
-        }
-
-        // Variables, día por día (7 días)
-        for i in 0..<7 {
+        // 6 días por adelantado (iOS permite máximo 64 avisos pendientes)
+        for i in 0..<6 {
             let d = Fecha.add(days: i, to: Date())
             let k = Fecha.key(d)
+            let p = perfil(d)
             let plan = Plan.dia(d)
+            Avisos.una("desayuno-\(k)", Fecha.at(p.breakfast, on: d), "🍳 Desayuno", MenuPlan.de(.desayuno, d))
+            Avisos.una("snack-\(k)", Fecha.at(p.snack, on: d), "🥪 Snack", MenuPlan.de(.snack, d))
+            Avisos.una("comida-\(k)", Fecha.at(p.lunch, on: d), "🍛 Hora de comer", MenuPlan.de(.comida, d))
             if plan.tipo != .descanso {
-                Avisos.una("pre-\(k)", Fecha.at(s.preWorkout, on: d), "🍌 Snack antes de entrenar", MenuPlan.de(.preentreno, d))
-                Avisos.una("entreno-\(k)", Fecha.at(s.workout, on: d), "\(plan.emoji) Hoy: \(plan.titulo)", plan.nota)
+                Avisos.una("pre-\(k)", Fecha.at(p.preWorkout, on: d), "🍌 Snack antes de entrenar", MenuPlan.de(.preentreno, d))
+                Avisos.una("entreno-\(k)", Fecha.at(p.workout, on: d), "\(plan.emoji) Hoy: \(plan.titulo)", plan.nota)
             }
-            let cama = horaDormir(d)
-            Avisos.una("pantallas-\(k)", Fecha.at(cama - 15, on: d), "📵 Fuera pantallas", "En 15 min a dormir (\(Fecha.hora(cama))). Tu estatura se hace dormido.")
+            Avisos.una("cena-\(k)", Fecha.at(p.dinner, on: d), "🌮 Hora de cenar", MenuPlan.de(.cena, d))
+            if !s.strongShower {
+                Avisos.una("bano-\(k)", Fecha.at(p.shower, on: d), "🚿 Hora de bañarte", "Agua caliente y luego a relajarte.")
+            }
+            Avisos.una("pantallas-\(k)", Fecha.at(p.bed - 15, on: d), "📵 Fuera pantallas", "En 15 min a dormir (\(Fecha.hora(p.bed))). Tu estatura se hace dormido.")
             if !s.strongBed {
-                Avisos.una("dormir-\(k)", Fecha.at(cama, on: d), "😴 A dormir", "Ya. Apaga todo.")
+                Avisos.una("dormir-\(k)", Fecha.at(p.bed, on: d), "😴 A dormir", "Ya. Apaga todo.")
             }
 
-            // Cierre del día + pregunta de la alarma
+            // Cierre del día + pregunta de mañana
             let manana = Fecha.add(days: 1, to: d)
-            let alarma = hayAlarma(manana)
-            let cuerpoAlarma = alarma
-                ? "⏰ Mañana suena a las \(Fecha.hora(s.wake)). ¿Hay escuela?"
-                : "Mañana no hay alarma. ¿La pongo?"
+            let pm = perfil(manana)
+            let pregunta: String
+            if !pm.libre {
+                pregunta = "🏫 Mañana hay escuela: alarma a las \(Fecha.hora(pm.wake)). ¿Sí hay escuela?"
+            } else if pm.alarma {
+                pregunta = "🏖️ Mañana es día libre (alarma suave \(Fecha.hora(pm.wake))). ¿O sí hay escuela?"
+            } else {
+                pregunta = "🏖️ Mañana es día libre, sin alarma. ¿O sí hay escuela?"
+            }
             let resumen = i == 0 && log(d).closed ? resumenCorto(d) + "\n" : "Toca para llenar qué hiciste hoy.\n"
-            Avisos.una("cierre-\(k)", Fecha.at(s.summary, on: d), "🌙 Cierre del día", resumen + cuerpoAlarma,
-                       categoria: alarma ? "NIGHT_ALARM" : "NIGHT_NOALARM")
+            Avisos.una("cierre-\(k)", Fecha.at(p.summary, on: d), "🌙 Cierre del día", resumen + pregunta,
+                       categoria: "NIGHT_ALARM")
         }
     }
 
@@ -331,15 +373,18 @@ final class Store: ObservableObject {
         let s = settings
         for i in 0..<14 {
             let d = Fecha.add(days: i, to: Date())
-            if hayAlarma(d) {
-                await Alarmas.programar(Fecha.at(s.wake, on: d), titulo: "⏰ Buenos días, a crecer", color: .orange)
+            let p = perfil(d)
+            if p.alarma {
+                await Alarmas.programar(Fecha.at(p.wake, on: d),
+                                        titulo: p.libre ? "☀️ Buenos días (día libre)" : "⏰ Buenos días, a crecer",
+                                        color: .orange)
             }
             if i < 7 {
                 if s.strongShower {
-                    await Alarmas.programar(Fecha.at(s.shower, on: d), titulo: "🚿 Hora de bañarte", color: .blue)
+                    await Alarmas.programar(Fecha.at(p.shower, on: d), titulo: "🚿 Hora de bañarte", color: .blue)
                 }
                 if s.strongBed {
-                    await Alarmas.programar(Fecha.at(horaDormir(d), on: d), titulo: "😴 A dormir", color: .indigo)
+                    await Alarmas.programar(Fecha.at(p.bed, on: d), titulo: "😴 A dormir", color: .indigo)
                 }
             }
         }

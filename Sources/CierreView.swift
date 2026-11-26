@@ -51,10 +51,13 @@ struct CierreView: View {
 
                 if !ayer {
                     Section("⏰ Mañana") {
-                        Toggle("Alarma a las \(Fecha.hora(store.settings.wake))", isOn: Binding(
-                            get: { store.hayAlarma(manana) },
-                            set: { on in Task { await store.alarmaManana(on) } }))
-                        Text("Apágala si mañana no hay escuela.").font(.footnote).foregroundStyle(.secondary)
+                        let pm = store.perfil(manana)
+                        Toggle("🏫 Mañana hay escuela", isOn: Binding(
+                            get: { !store.esLibre(manana) },
+                            set: { on in store.setEscuela(manana, on) }))
+                            .disabled(store.enVacaciones(manana))
+                        Text(pm.alarma ? "Alarma a las \(Fecha.hora(pm.wake))" : "Sin alarma (día libre)")
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
 
