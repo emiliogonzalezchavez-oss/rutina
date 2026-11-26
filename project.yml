@@ -2,7 +2,7 @@ name: Rutina
 options:
   bundleIdPrefix: com.emigonz
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "26.1"
 settings:
   base:
     SWIFT_VERSION: "5.0"
