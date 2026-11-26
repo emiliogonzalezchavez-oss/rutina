@@ -46,6 +46,8 @@ struct HoyView: View {
                         }
                     }
 
+                    ComidaHoySection(fecha: hoy)
+
                     Section("Escuela esta semana") {
                         SemanaEscuela()
                         Toggle("🏖️ Modo vacaciones", isOn: $store.settings.vacationOn)
